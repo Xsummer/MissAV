@@ -8,6 +8,15 @@
 - 发版：改 `manifest.json` 的 `version`，打 `v<版本号>` 标签推送，CI 发布 Release。
 - 本机校验：`python3 <guoapp-modules/.github 仓库>/scripts/check_module.py . --repo <仓库名>`。
 
+## 本模块要点
+
+- 标识是 `missav`，清单里 `browserFingerprint: true`。站点和播放 CDN（`*.surrit.com`）都按 TLS 指纹拦请求，普通 `http.Client` 只能拿到 403，改清单时不要删这一项。
+- 播放地址不在 HTML 属性里，在详情页内联脚本的 packer 压缩块里，由 `unpackPacked` 展开。改解析时先确认详情页还带着 `eval(function(p,a,c,k,e,d)` 这一段。
+- 播放请求必须带详情页作 `Referer`，`resolveMedia` 返回的 `referer` 不能为空。
+- 站点是单集片，`detail` 只出一个分集；分集 `id` 的 key 固定为 `1`，写进用户记录，不能改。
+- 列表每页 12 条、最多 2000 页；`hasMore` 按页面里 `page=<下一页>` 的链接判断。
+- 离线测试：`node --test test/main.test.cjs`，页面是合成 HTML，不联网。
+
 ## 站点访问规定
 
 - 不得在会话里以任何形式直接访问站点，包括 `moduletool`、curl 和会联网的测试。

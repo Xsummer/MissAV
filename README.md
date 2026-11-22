@@ -115,6 +115,46 @@ resolveMedia(task) {
 
 `host.fetchText({ url, referer, userAgent, cookie, noCache, body, mirrors })` 返回 `{ body, url }`，`url` 是实际响应的地址，重定向或换用候选地址后与请求的不同；`mirrors` 是主地址失败后依次尝试的候选地址。
 
+## 本模块的实现
+
+MissAV 是单集片源站：一部影片就是一集，所以 `detail` 只返回一个分集，`totalEpisode` 固定为 1。
+
+- 页面一律取 `https://missav.live/cn/`（简体中文），主地址失败时由 `hosts` 里声明的 `missav.ws` 兜底。
+- 站点和播放 CDN 都按 TLS 指纹拦请求，所以清单里声明了 `browserFingerprint: true`，并把 `surrit.com` 一并写进 `hosts`：播放地址要用 Chrome 指纹去取，普通连接会拿到 Cloudflare 的 403。
+- 播放地址藏在详情页内联脚本的 packer 压缩块里，`unpackPacked` 按同样的字典规则展开后再读 `surrit` 的 UUID 目录；拿不到时整页原文里也匹配一次。
+- 主播放列表是自适应码流（360p/480p/720p/1080p），`playlistLevels` 解析出各档位后按清晰度从高到低填进 `variants`；解析失败就退回主列表一条线路。
+- 播放请求必须带详情页地址作 `referer`，CDN 只认它。
+
+## 分类
+
+`categories` 由固定栏目加类型列表拼成：
+
+- 固定栏目：`new` 最近更新、`release` 新作上市、`today-hot` 今日热门、`weekly-hot` 本周热门、`monthly-hot` 本月热门、`chinese-subtitle` 中文字幕、`uncensored-leak` 无码流出、`vr`、`4k`。
+- 类型：id 形如 `genre:<URL 编码的类型名>`，例如 `genre:NTR`、`genre:高清`（`%` 编码形式）。
+
+站点每页 12 条、最多 2000 页；`hasMore` 按页面里是否出现 `page=<下一页>` 的链接判断。
+
+## 榜单
+
+清单声明了 4 个榜单，由 `rankingPage(boardId, page)` 实现：
+
+| 榜单 id | 名称 | 地址 |
+| --- | --- | --- |
+| `missav-today` | 今日热门 | `/cn/today-hot` |
+| `missav-weekly` | 本周热门 | `/cn/weekly-hot` |
+| `missav-monthly` | 本月热门 | `/cn/monthly-hot` |
+| `missav-uncensored` | 无码流出榜 | `/cn/uncensored-leak` |
+
+## 测试
+
+`test/main.test.cjs` 用 `node:vm` 加一个假的 `host` 跑，页面是照站点结构写的合成 HTML（占位标题、占位编号），不发任何网络请求：
+
+~~~sh
+node --test test/main.test.cjs
+~~~
+
+覆盖分类映射、列表与分页、搜索编码、详情信息行、packer 展开、清晰度排序、错误文案和榜单编号。
+
 ## 发版
 
 1. 改 `manifest.json` 的 `version`（格式 `1.2.3`），提交。
