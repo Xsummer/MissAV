@@ -16,10 +16,15 @@ function load(options) {
   const requests = [];
   const pages = settings.pages || {};
   const playlists = settings.playlists || {};
+  const cache = {};
   const host = {
     source: "missav",
     dramaId: (sourceId) => "missav:" + sourceId,
     chapterId: (sourceId, key) => "missav:" + sourceId + ":" + key,
+    cacheGet: (key) => (key in cache ? cache[key] : null),
+    cacheSet: (key, value) => {
+      cache[key] = value;
+    },
     fetchText: (request) => {
       requests.push(request);
       const answer = typeof pages === "function" ? pages(request.url) : pages[request.url];
@@ -42,7 +47,7 @@ function load(options) {
   };
   const context = vm.createContext({ host, module: { exports: {} }, console });
   vm.runInContext(source, context);
-  return { api: context.module.exports, requests };
+  return { api: context.module.exports, requests, cache };
 }
 
 test("categories expose fixed sections plus genres and reject unknown ids", () => {
@@ -71,7 +76,8 @@ test("catalogPage parses cards, decodes entities and reports more pages", () => 
   assert.equal(first.badge, "1:02:03");
   assert.equal(page.items[1].sourceId, "bbb-002");
   assert.equal(requests[0].url, "https://missav.live/cn/new");
-  assert.equal(requests[0].mirrors[0], "https://missav.ws/cn/new");
+  assert.equal(requests[0].referer, "https://missav.live/");
+  assert.equal(requests.length, 1);
 });
 
 test("catalogPage requests the page number and genre path", () => {
@@ -175,11 +181,82 @@ test("resolveMedia reports a missing stream and a missing id", () => {
   assert.throws(() => api.resolveMedia({ dramaId: "", chapter: {} }), /播放信息无效/);
 });
 
+test("a blocked primary site falls through to the mirror", () => {
+  const { api, requests } = load({
+    pages: (url) => {
+      if (url.startsWith("https://missav.live/")) {
+        throw new Error("missav.live HTTP 403");
+      }
+      return LISTING;
+    }
+  });
+  const page = api.catalogPage(1, "");
+  assert.equal(page.items.length, 2);
+  assert.deepEqual(requests.map((entry) => entry.url), ["https://missav.live/cn/new", "https://missav.ws/cn/new"]);
+});
+
+test("the site that answered is remembered and tried first next time", () => {
+  const { api, requests, cache } = load({
+    pages: (url) => {
+      if (url.startsWith("https://missav.live/")) {
+        throw new Error("missav.live HTTP 403");
+      }
+      return LISTING;
+    }
+  });
+  api.catalogPage(1, "");
+  assert.equal(cache["preferred-site"], "https://missav.ws");
+  requests.length = 0;
+  api.catalogPage(2, "");
+  assert.equal(requests[0].url, "https://missav.ws/cn/new?page=2");
+});
+
+test("a missing page never falls through to the mirror", () => {
+  const { api, requests } = load({ pages: {} });
+  assert.throws(() => api.detail("zzz-999"), /页面不存在/);
+  assert.equal(requests.length, 1);
+});
+
+test("every line blocked reports a switch-proxy message", () => {
+  const { api } = load({
+    pages: () => {
+      throw new Error("missav.live HTTP 403");
+    }
+  });
+  assert.throws(() => api.catalogPage(1, ""), /站点限制了当前请求.*所有线路都被拦截/);
+});
+
 test("network failures are translated into readable messages", () => {
-  const offline = load({ pages: { "https://missav.live/cn/new": new Error("connect timeout") } });
+  const offline = load({
+    pages: () => {
+      throw new Error("connect timeout");
+    }
+  });
   assert.throws(() => offline.api.catalogPage(1, ""), /连接站点失败/);
-  const forbidden = load({ pages: { "https://missav.live/cn/new": new Error("missav.live HTTP 403") } });
-  assert.throws(() => forbidden.api.catalogPage(1, ""), /站点限制了当前请求/);
+  const limited = load({
+    pages: () => {
+      throw new Error("missav.live HTTP 429");
+    }
+  });
+  assert.throws(() => limited.api.catalogPage(1, ""), /站点限流了/);
+});
+
+test("detail and playback keep the referer of whichever site served the page", () => {
+  const origin = "https://c.surrit.com/00000000-1111-2222-3333-444444444444";
+  const { api } = load({
+    pages: (url) => {
+      if (url.startsWith("https://missav.live/")) {
+        throw new Error("missav.live HTTP 403");
+      }
+      return url.includes("/cn/aaa-001") ? DETAIL : LISTING;
+    },
+    playlists: { [origin + "/playlist.m3u8"]: MASTER }
+  });
+  const result = api.detail("aaa-001");
+  assert.equal(result.chapters[0].pageUrl, "https://missav.ws/cn/aaa-001");
+  const media = api.resolveMedia({ dramaId: "missav:aaa-001", chapter: result.chapters[0] });
+  assert.equal(media.referer, "https://missav.ws/cn/aaa-001");
+  assert.equal(media.variants[0].referer, "https://missav.ws/cn/aaa-001");
 });
 
 test("rankingPage numbers items and maps boards to sections", () => {

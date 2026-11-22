@@ -1,7 +1,7 @@
 {
   "id": "missav",
   "name": "MissAV",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "高清日本AV · 分类浏览 · 在线搜索 · 1080P/720P",
   "runtime": "js",
   "api": 1,
@@ -16,7 +16,10 @@
     "surrit.com",
     "*.surrit.com"
   ],
-  "capabilities": ["search", "rankings"],
+  "capabilities": [
+    "search",
+    "rankings"
+  ],
   "aliases": [
     "missav.live",
     "www.missav.live",
@@ -31,9 +34,25 @@
   "noHostRotation": true,
   "allowEmptyCatalog": true,
   "rankings": [
-    { "id": "missav-today", "name": "今日热门", "description": "MissAV 当日播放榜，每日更新。" },
-    { "id": "missav-weekly", "name": "本周热门", "description": "MissAV 本周播放榜，每日更新。" },
-    { "id": "missav-monthly", "name": "本月热门", "description": "MissAV 本月播放榜，每日更新。" },
-    { "id": "missav-uncensored", "name": "无码流出榜", "description": "MissAV 无码流出更新列表。" }
+    {
+      "id": "missav-today",
+      "name": "今日热门",
+      "description": "MissAV 当日播放榜，每日更新。"
+    },
+    {
+      "id": "missav-weekly",
+      "name": "本周热门",
+      "description": "MissAV 本周播放榜，每日更新。"
+    },
+    {
+      "id": "missav-monthly",
+      "name": "本月热门",
+      "description": "MissAV 本月播放榜，每日更新。"
+    },
+    {
+      "id": "missav-uncensored",
+      "name": "无码流出榜",
+      "description": "MissAV 无码流出更新列表。"
+    }
   ]
 }

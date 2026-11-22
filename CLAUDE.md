@@ -12,7 +12,9 @@
 
 - 标识是 `missav`，清单里 `browserFingerprint: true`。站点和播放 CDN（`*.surrit.com`）都按 TLS 指纹拦请求，普通 `http.Client` 只能拿到 403，改清单时不要删这一项。
 - 播放地址不在 HTML 属性里，在详情页内联脚本的 packer 压缩块里，由 `unpackPacked` 展开。改解析时先确认详情页还带着 `eval(function(p,a,c,k,e,d)` 这一段。
-- 播放请求必须带详情页作 `Referer`，`resolveMedia` 返回的 `referer` 不能为空。
+- 播放请求必须带详情页作 `Referer`，`resolveMedia` 返回的 `referer` 不能为空，且必须与取到页面的那条线路同域（`detail` 的 `pageUrl` 同理）。
+- 线路回退由模块自己做（`fetchPage` 顺序试 `SITES`，`preferred-site` 缓存优先），不要改用 `mirrors`：清单里 `noHostRotation: true` 时宿主的 `providerURLCandidates` 会忽略 mirrors。
+- 新增线路时只改 `SITES` 常量；404 不换线路，403/429/验证/超时才换。
 - 站点是单集片，`detail` 只出一个分集；分集 `id` 的 key 固定为 `1`，写进用户记录，不能改。
 - 列表每页 12 条、最多 2000 页；`hasMore` 按页面里 `page=<下一页>` 的链接判断。
 - 离线测试：`node --test test/main.test.cjs`，页面是合成 HTML，不联网。

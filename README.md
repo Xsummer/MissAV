@@ -119,11 +119,11 @@ resolveMedia(task) {
 
 MissAV 是单集片源站：一部影片就是一集，所以 `detail` 只返回一个分集，`totalEpisode` 固定为 1。
 
-- 页面一律取 `https://missav.live/cn/`（简体中文），主地址失败时由 `hosts` 里声明的 `missav.ws` 兜底。
+- 页面一律取简体中文路径 `/cn/`。清单声明了 `noHostRotation: true`（关掉它宿主会把拼好的镜像地址改回 `baseUrl`），所以线路回退由模块自己做：`fetchPage` 按 `missav.live` → `missav.ws` 的顺序逐个发请求，上一次成功的站点用 `host.cacheGet/cacheSet` 记住 10 分钟并优先，被 `403` / `429` / 验证页 / 超时挡下就换下一条线路，只有 `404` 直接中断（换域名也救不回不存在的页面）。全部线路都被拦截时，错误文案追加「所有线路都被拦截，请更换代理节点后重试」。
 - 站点和播放 CDN 都按 TLS 指纹拦请求，所以清单里声明了 `browserFingerprint: true`，并把 `surrit.com` 一并写进 `hosts`：播放地址要用 Chrome 指纹去取，普通连接会拿到 Cloudflare 的 403。
 - 播放地址藏在详情页内联脚本的 packer 压缩块里，`unpackPacked` 按同样的字典规则展开后再读 `surrit` 的 UUID 目录；拿不到时整页原文里也匹配一次。
 - 主播放列表是自适应码流（360p/480p/720p/1080p），`playlistLevels` 解析出各档位后按清晰度从高到低填进 `variants`；解析失败就退回主列表一条线路。
-- 播放请求必须带详情页地址作 `referer`，CDN 只认它。
+- 播放请求必须带详情页地址作 `referer`，CDN 只认它；实测 `missav.live` 与 `missav.ws` 的详情页地址都能通过，但 `referer` 必须与真正取到页面的那条线路一致，所以 `detail` 的 `pageUrl` 和 `resolveMedia` 的 `referer` 都跟着 `fetchPage` 返回的站点走。
 
 ## 分类
 

@@ -106,30 +106,116 @@ function pageSuffix(page) {
 
 // ---------- 网络 ----------
 
-function fetchPage(path, fresh) {
-  let response;
+const SITE_CACHE_KEY = "preferred-site";
+const SITE_CACHE_TTL = 10 * 60 * 1000;
+
+// 上一次成功的站点排到最前，避免每次先撞一遍被拦的域名。
+function siteOrder() {
+  const order = [];
+  let remembered = "";
   try {
-    response = host.fetchText({
-      url: SITES[0] + path,
-      referer: HOME_REFERER,
-      mirrors: [SITES[1] + path],
-      noCache: fresh === true
-    });
+    remembered = String(host.cacheGet(SITE_CACHE_KEY) || "");
   } catch (error) {
-    throw new Error(describeError(error));
+    remembered = "";
   }
-  return response && response.body ? String(response.body) : "";
+  for (let index = 0; index < SITES.length; index++) {
+    if (SITES[index] === remembered) {
+      order.push(SITES[index]);
+    }
+  }
+  for (let index = 0; index < SITES.length; index++) {
+    if (order.indexOf(SITES[index]) < 0) {
+      order.push(SITES[index]);
+    }
+  }
+  return order;
+}
+
+function rememberSite(site) {
+  try {
+    host.cacheSet(SITE_CACHE_KEY, site, SITE_CACHE_TTL);
+  } catch (error) {
+    // 缓存不可用时只影响排序，不影响请求。
+  }
+}
+
+function errorText(error) {
+  return String((error && error.message) || error || "");
+}
+
+// 404 说明页面本身不存在，换域名没有意义；其余错误（403、429、验证页、超时）都值得换一条线路再试。
+function shouldSwitchSite(error) {
+  return errorText(error).indexOf("404") < 0;
+}
+
+function blockedText(error) {
+  const text = errorText(error);
+  return /HTTP 403|HTTP 429|Cloudflare|验证|blocked|just a moment/i.test(text);
+}
+
+function hostOf(address) {
+  const match = String(address || "").match(/^https?:\/\/([^\/]+)/i);
+  return match ? match[1] : "";
+}
+
+// 依次尝试各条线路，返回正文和实际响应的站点。
+function fetchPage(path, fresh, preferUrl) {
+  const order = siteOrder();
+  const preferred = hostOf(preferUrl);
+  if (preferred) {
+    for (let index = order.length - 1; index >= 0; index--) {
+      if (hostOf(order[index]) === preferred) {
+        const site = order.splice(index, 1)[0];
+        order.unshift(site);
+        break;
+      }
+    }
+  }
+  let firstError = null;
+  let blocked = false;
+  for (let index = 0; index < order.length; index++) {
+    const site = order[index];
+    try {
+      const response = host.fetchText({
+        url: site + path,
+        referer: site + "/",
+        noCache: fresh === true
+      });
+      const body = response && response.body ? String(response.body) : "";
+      if (!body) {
+        firstError = firstError || new Error("站点返回了空页面");
+        continue;
+      }
+      rememberSite(site);
+      return { body: body, site: site };
+    } catch (error) {
+      firstError = firstError || error;
+      if (blockedText(error)) {
+        blocked = true;
+      }
+      if (!shouldSwitchSite(error)) {
+        break;
+      }
+    }
+  }
+  if (blocked) {
+    throw new Error(describeError(firstError) + "；所有线路都被拦截，请更换代理节点后重试");
+  }
+  throw new Error(describeError(firstError));
 }
 
 function describeError(error) {
-  const text = String((error && error.message) || error || "");
+  const text = errorText(error);
   if (text.indexOf("404") >= 0) {
     return "页面不存在，可能已下架";
   }
-  if (/HTTP 403|HTTP 429/.test(text)) {
+  if (/HTTP 429/.test(text)) {
+    return "站点限流了，请稍后重试";
+  }
+  if (/HTTP 403/.test(text)) {
     return "站点限制了当前请求，请稍后重试";
   }
-  if (/Cloudflare|验证|blocked/i.test(text)) {
+  if (/Cloudflare|验证|blocked|just a moment/i.test(text)) {
     return "站点要求人机验证，请稍后重试";
   }
   if (/timeout|超时|Deadline|连接失败|网络/i.test(text)) {
@@ -501,14 +587,15 @@ function resolveMedia(task) {
   if (!path) {
     throw new Error("播放信息无效，请返回详情页重试");
   }
-  const pageUrl = chapter.pageUrl ? String(chapter.pageUrl) : SITES[0] + "/cn/" + path;
-  const body = fetchPage("/cn/" + path, true);
-  const origin = streamOrigin(body);
+  const loaded = fetchPage("/cn/" + path, true, chapter.pageUrl);
+  // Referer 必须是真正取到这一页的那个站点，CDN 只认本站地址。
+  const pageUrl = loaded.site + "/cn/" + path;
+  const origin = streamOrigin(loaded.body);
   if (!origin) {
     throw new Error("该影片没有可用的播放地址，可能已下架");
   }
   const master = origin + "/playlist.m3u8";
-  const durationMs = pageDurationMs(body);
+  const durationMs = pageDurationMs(loaded.body);
   const levels = playlistLevels(master, pageUrl);
   const routes = levels.length > 0 ? levels : [{ url: master, quality: 0 }];
   const variants = [];
@@ -550,9 +637,9 @@ function catalogPage(page, category) {
     throw new Error("MissAV 没有分类 " + category);
   }
   const index = clampPage(page);
-  const body = fetchPage(entry.path + pageSuffix(index));
-  const items = parseCards(body);
-  return { items: items, hasMore: items.length > 0 && hasNextPage(body, index) };
+  const page_ = fetchPage(entry.path + pageSuffix(index));
+  const items = parseCards(page_.body);
+  return { items: items, hasMore: items.length > 0 && hasNextPage(page_.body, index) };
 }
 
 function search(page, query) {
@@ -561,9 +648,9 @@ function search(page, query) {
     return { items: [], hasMore: false };
   }
   const index = clampPage(page);
-  const body = fetchPage("/cn/search/" + encodeURIComponent(text) + pageSuffix(index));
-  const items = parseCards(body);
-  return { items: items, hasMore: items.length > 0 && hasNextPage(body, index) };
+  const page_ = fetchPage("/cn/search/" + encodeURIComponent(text) + pageSuffix(index));
+  const items = parseCards(page_.body);
+  return { items: items, hasMore: items.length > 0 && hasNextPage(page_.body, index) };
 }
 
 function detail(sourceId) {
@@ -571,12 +658,12 @@ function detail(sourceId) {
   if (path === "") {
     throw new Error("影片编号为空，请刷新列表后重试");
   }
-  const body = fetchPage("/cn/" + path, true);
-  const info = parseDetail(body);
+  const loaded = fetchPage("/cn/" + path, true);
+  const info = parseDetail(loaded.body);
   if (!info.title && !info.code) {
     throw new Error("没有找到该影片，可能已下架");
   }
-  const pageUrl = SITES[0] + "/cn/" + path;
+  const pageUrl = loaded.site + "/cn/" + path;
   const intro = detailIntro(info);
   const label = info.title || info.code || path;
   const drama = {
@@ -612,8 +699,8 @@ function rankingPage(boardId, page) {
     throw new Error("未知榜单 " + id);
   }
   const index = clampPage(page);
-  const body = fetchPage(board.path + pageSuffix(index));
-  const items = parseCards(body);
+  const page_ = fetchPage(board.path + pageSuffix(index));
+  const items = parseCards(page_.body);
   const ranked = [];
   for (let cursor = 0; cursor < items.length; cursor++) {
     ranked.push({ rank: cursor + 1, drama: items[cursor] });
@@ -622,7 +709,7 @@ function rankingPage(boardId, page) {
     boardId: id,
     page: index,
     items: ranked,
-    hasMore: items.length > 0 && hasNextPage(body, index)
+    hasMore: items.length > 0 && hasNextPage(page_.body, index)
   };
 }
 
